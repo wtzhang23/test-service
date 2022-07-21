@@ -42,7 +42,7 @@ impl Server {
         let addr = if let Some(addr) = &self.addr {
             addr.to_owned()
         } else {
-            "127.0.0.1:8080".to_owned()
+            "localhost:8080".to_owned()
         };
 
         println!("Hosting server on {addr} with body {body}");
