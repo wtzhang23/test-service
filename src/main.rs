@@ -3,6 +3,7 @@ use std::time::{Instant, Duration};
 use std::{fs, io, path::PathBuf};
 
 use actix_web::{get, web::Data, App, HttpResponse, HttpServer, Responder};
+use awc::{Connector, ClientBuilder};
 use clap::{Args, Parser, Subcommand};
 use futures::StreamExt;
 use indicatif::ProgressDrawTarget;
@@ -94,18 +95,10 @@ impl Client {
         for _ in 0..self.num {
             let bar = bar.clone();
             to_run.push(async move {
-                let client = awc::Client::default();
-                let mut start_time;
-                let mut res;
-                loop {
-                    start_time = Instant::now();
-                    if let Ok(r) = client.get(self.addr.clone()).send().await {
-                        res = r;
-                        break;
-                    }
-                    println!("Failed to make request. Trying again.");
-                    async_std::task::sleep(Duration::new(1, 0)).await;
-                }
+                let connector = Connector::new().conn_lifetime(Duration::from_secs(1)).limit(1000);
+                let client = ClientBuilder::new().connector(connector).finish();
+                let start_time = Instant::now();
+                let mut res = client.get(self.addr.clone()).send().await.unwrap();
                 let body = res.body().await.unwrap();
                 let body = if let Ok(body) = std::str::from_utf8(&body) {
                     body.to_owned()
