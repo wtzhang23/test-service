@@ -11,3 +11,6 @@ awc = "3"
 base64 = "0.13"
 clap = {version = "3", features = ["derive"]}
 futures = "0.3"
+indicatif = "0.16"
+nalgebra = "0.31"
+statrs = "0.15"

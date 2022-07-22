@@ -1,7 +1,11 @@
-use std::{path::PathBuf, fs, io};
+use std::sync::Arc;
+use std::time::Instant;
+use std::{fs, io, path::PathBuf};
 
-use actix_web::{get, App, HttpResponse, HttpServer, Responder, web::Data};
-use clap::{Parser, Args, Subcommand};
+use actix_web::{get, web::Data, App, HttpResponse, HttpServer, Responder};
+use clap::{Args, Parser, Subcommand};
+use futures::StreamExt;
+use indicatif::ProgressDrawTarget;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -23,7 +27,7 @@ struct Server {
     #[clap(long)]
     path: Option<PathBuf>,
     #[clap(long)]
-    raw: Option<String>,   
+    raw: Option<String>,
 }
 
 impl Server {
@@ -47,27 +51,28 @@ impl Server {
 
         println!("Hosting server on {addr} with body {body}");
 
-        HttpServer::new(move || {
-            App::new()
-                .app_data(Data::new(body.clone()))
-                .service(hello)
-        })
-        .bind(addr)
-        .unwrap()
-        .run()
-        .await.unwrap()
+        HttpServer::new(move || App::new().app_data(Data::new(body.clone())).service(hello))
+            .bind(addr)
+            .unwrap()
+            .run()
+            .await
+            .unwrap()
     }
 }
 
 #[derive(Args, Debug, Clone)]
 struct Client {
-    #[clap(short, long, default_value="1")]
+    #[clap(short, long, default_value = "1")]
     num: usize,
     addr: String,
     #[clap(long)]
     path: Option<PathBuf>,
     #[clap(long)]
     raw: Option<String>,
+    #[clap(short, long, default_value = "1")]
+    max_outbound_requests: usize,
+    #[clap(short, long)]
+    stats: bool,
 }
 
 impl Client {
@@ -80,13 +85,24 @@ impl Client {
             Ok(None)
         }
     }
-    
+
     pub async fn run(&self) {
         let mut to_run = Vec::new();
+        let bar = Arc::new(indicatif::ProgressBar::new(self.num as u64));
+        bar.set_draw_target(ProgressDrawTarget::stdout());
         for _ in 0..self.num {
-            to_run.push(async {
+            let bar = bar.clone();
+            to_run.push(async move {
                 let client = awc::Client::default();
-                let mut res = client.get(self.addr.clone()).send().await.unwrap();
+                let mut start_time;
+                let mut res;
+                loop {
+                    start_time = Instant::now();
+                    if let Ok(r) = client.get(self.addr.clone()).send().await {
+                        res = r;
+                        break;
+                    }
+                }
                 let body = res.body().await.unwrap();
                 let body = if let Ok(body) = std::str::from_utf8(&body) {
                     body.to_owned()
@@ -94,13 +110,27 @@ impl Client {
                     base64::encode(body)
                 };
                 if let Some(to_compare) = self.get_body().unwrap() {
-                    assert_eq!(to_compare, body)
+                    assert_eq!(to_compare, body);
+                    bar.inc(1);
                 } else {
                     println!("{body}")
                 }
+                let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
+                return elapsed;
             });
         }
-        futures::future::join_all(to_run.into_iter()).await;
+        let timestamps = futures::stream::iter(to_run.into_iter())
+            .buffer_unordered(self.max_outbound_requests)
+            .collect::<Vec<_>>()
+            .await;
+        let timestamps_matrix = nalgebra::Matrix1xX::from_column_slice(&timestamps);
+        let mean = timestamps_matrix.mean();
+        let std = timestamps_matrix.variance();
+        bar.finish_and_clear();
+        if self.stats {
+            println!("mean: {mean}");
+            println!("std: {std}");
+        }
     }
 }
 
