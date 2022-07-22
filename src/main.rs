@@ -89,6 +89,7 @@ impl Client {
     pub async fn run(&self) {
         let mut to_run = Vec::new();
         let bar = Arc::new(indicatif::ProgressBar::new(self.num as u64));
+        println!("Client running {} tests", self.num);
         bar.set_draw_target(ProgressDrawTarget::stdout());
         for _ in 0..self.num {
             let bar = bar.clone();
