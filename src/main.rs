@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::{fs, io, path::PathBuf};
 
 use actix_web::{get, web::Data, App, HttpResponse, HttpServer, Responder};
@@ -104,6 +104,7 @@ impl Client {
                         break;
                     }
                     println!("Failed to make request. Trying again.");
+                    async_std::task::sleep(Duration::new(1, 0)).await;
                 }
                 let body = res.body().await.unwrap();
                 let body = if let Ok(body) = std::str::from_utf8(&body) {
