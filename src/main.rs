@@ -103,6 +103,7 @@ impl Client {
                         res = r;
                         break;
                     }
+                    println!("Failed to make request. Trying again.");
                 }
                 let body = res.body().await.unwrap();
                 let body = if let Ok(body) = std::str::from_utf8(&body) {
