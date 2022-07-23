@@ -1,8 +1,7 @@
-use std::time::{Instant, Duration};
+use std::time::Instant;
 use std::{fs, io, path::PathBuf};
 
 use actix_web::{get, web::Data, App, HttpResponse, HttpServer, Responder};
-use awc::{Connector, ClientBuilder};
 use clap::{Args, Parser, Subcommand};
 use indicatif::ProgressDrawTarget;
 
