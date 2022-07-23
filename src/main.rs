@@ -1,8 +1,10 @@
+use std::sync::Arc;
 use std::time::Instant;
 use std::{fs, io, path::PathBuf};
 
 use actix_web::{get, web::Data, App, HttpResponse, HttpServer, Responder};
 use clap::{Args, Parser, Subcommand};
+use futures::StreamExt;
 use indicatif::ProgressDrawTarget;
 
 #[derive(Parser, Debug, Clone)]
@@ -67,6 +69,8 @@ struct Client {
     path: Option<PathBuf>,
     #[clap(long)]
     raw: Option<String>,
+    #[clap(short, long, default_value = "1")]
+    max_outbound_requests: usize,
     #[clap(short, long)]
     stats: bool,
 }
@@ -83,29 +87,37 @@ impl Client {
     }
 
     pub async fn run(&self) {
-        let bar = indicatif::ProgressBar::new(self.num as u64);
+        let mut to_run = Vec::new();
+        let bar = Arc::new(indicatif::ProgressBar::new(self.num as u64));
         println!("Client running {} tests", self.num);
-        let mut timestamps = Vec::with_capacity(self.num);
         bar.set_draw_target(ProgressDrawTarget::stdout());
-        let client = awc::Client::new();
+        let client = Arc::new(awc::Client::default());
         for _ in 0..self.num {
-            let start_time = Instant::now();
-            let mut res = client.get(self.addr.clone()).send().await.unwrap();
-            let body = res.body().await.unwrap();
-            let body = if let Ok(body) = std::str::from_utf8(&body) {
-                body.to_owned()
-            } else {
-                base64::encode(body)
-            };
-            if let Some(to_compare) = self.get_body().unwrap() {
-                assert_eq!(to_compare, body);
-                bar.inc(1);
-            } else {
-                println!("{body}")
-            }
-            let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
-            timestamps.push(elapsed);
+            let bar = bar.clone();
+            let client = client.clone();
+            to_run.push(async move {
+                let start_time = Instant::now();
+                let mut res = client.get(self.addr.clone()).send().await.unwrap();
+                let body = res.body().await.unwrap();
+                let body = if let Ok(body) = std::str::from_utf8(&body) {
+                    body.to_owned()
+                } else {
+                    base64::encode(body)
+                };
+                if let Some(to_compare) = self.get_body().unwrap() {
+                    assert_eq!(to_compare, body);
+                    bar.inc(1);
+                } else {
+                    println!("{body}")
+                }
+                let elapsed = start_time.elapsed().as_secs_f64() * 1000.0;
+                return elapsed;
+            });
         }
+        let timestamps = futures::stream::iter(to_run.into_iter())
+            .buffer_unordered(self.max_outbound_requests)
+            .collect::<Vec<_>>()
+            .await;
         let timestamps_matrix = nalgebra::Matrix1xX::from_column_slice(&timestamps);
         let mean = timestamps_matrix.mean();
         let std = timestamps_matrix.variance();
